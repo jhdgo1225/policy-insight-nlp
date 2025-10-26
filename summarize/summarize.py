@@ -4,6 +4,7 @@ import requests
 from konlpy.tag import Okt
 import time
 import re
+import copy
 
 import torch
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
@@ -89,17 +90,26 @@ def preprocess_text_for_inference(text_lines):
         processed_line = ' '.join(filtered_morphs)
         processed_lines.append(processed_line)
     
+    # 요약 태스크를 인식하기 위해 전처리 문장 리스트의 첫 번째 요소로 "요약: " 추가
+    processed_lines.insert(0, "요약: ")
     return processed_lines
 
+def func(x):
+    result = copy.deepcopy(x)
+    result['body'].insert(0, "요약: ")
+    return result
 
 def load_cleaned_datasets():
     """전처리된 데이터셋 로드"""
     with open('./cleaned_datasets/cleaned_train_dataset.json') as f:
         train_dataset = [data for data in json.load(f)]
+        train_dataset = list(map(func, train_dataset))
     with open('./cleaned_datasets/cleaned_valid_dataset.json') as f:
         valid_dataset = [data for data in json.load(f)]
+        valid_dataset = list(map(func, valid_dataset))
     with open('./cleaned_datasets/cleaned_test_dataset.json') as f:
         test_dataset = [data for data in json.load(f)]
+        test_dataset = list(map(func, test_dataset))
     return train_dataset, valid_dataset, test_dataset
 
 
@@ -390,7 +400,7 @@ def inference_example(trainer=None, tokenizer=None, model=None):
     print("\n[전처리된 텍스트]")
     for i, line in enumerate(processed_lines, 1):
         print(f"  {i}. {line}")
-    
+
     # 전처리된 텍스트를 하나의 문자열로 결합
     input_text = ' '.join(processed_lines)
     
@@ -441,6 +451,7 @@ def inference_example(trainer=None, tokenizer=None, model=None):
     ]
     
     processed = preprocess_text_for_inference(news_text)
+    
     input_text = ' '.join(processed)
     inputs = tokenizer(input_text, max_length=1024, truncation=True, return_tensors='pt')
     inputs = {k: v.to(device) for k, v in inputs.items()}

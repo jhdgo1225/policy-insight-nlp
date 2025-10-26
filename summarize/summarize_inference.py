@@ -73,6 +73,7 @@ def preprocess_text_for_inference(text_lines):
         processed_line = ' '.join(filtered_morphs)
         processed_lines.append(processed_line)
     
+    processed_lines.insert(0, "요약: ")
     return processed_lines
 
 
@@ -92,6 +93,7 @@ def summarize_text(text_input, model, tokenizer, device):
     # 리스트인 경우 전처리 수행
     if isinstance(text_input, list):
         processed_lines = preprocess_text_for_inference(text_input)
+        # 요약 태스크를 인식하기 위해 전처리 문장 리스트의 첫 번째 요소로 "요약: " 추가
         input_text = ' '.join(processed_lines)
     else:
         input_text = text_input
