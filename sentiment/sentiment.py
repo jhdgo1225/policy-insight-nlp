@@ -83,9 +83,6 @@ def convert_label(example):
 	return example
 
 dataset = dataset.map(convert_label)
-# print(f"원본 문장: {dataset['train'][0]['sentence']},\n정제된 문장: {clean_text(dataset['train'][0]['sentence'])}")
-# print("------------------------------")
-
 
 # ========================================
 # 3. 토크나이저 및 데이터 전처리
