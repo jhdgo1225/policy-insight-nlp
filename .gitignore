@@ -2,3 +2,8 @@
 ./sentiment/*.csv
 **/.DS_Store
 summarize/newspaper_summarize
+summarize/newspaper_summarize_jsonl
+summarize/cleaned_datasets
+summarize/kobart_summarization_results
+sentiment/kpfbert_sentiment_model
+**/*.log
