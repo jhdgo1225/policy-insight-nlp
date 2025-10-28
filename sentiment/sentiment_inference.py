@@ -10,16 +10,13 @@ from sklearn.metrics import accuracy_score, precision_recall_fscore_support, cla
 from konlpy.tag import Okt
 import requests
 
+def load_model_and_tokenizer(model_ckpt):
+	model = BertForSequenceClassification.from_pretrained(model_ckpt)
+	tokenizer = BertTokenizer.from_pretrained(model_ckpt)
+	device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+	model.to(device)
+	return model, tokenizer, device
 
-model_ckpt = './kpfbert_sentiment_model'
-model = BertForSequenceClassification.from_pretrained(model_ckpt)
-tokenizer = BertTokenizer.from_pretrained(model_ckpt)
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# move model to device
-model.to(device)
-# ========================================
-# 2. 추론 함수 정의
-# ========================================
 
 def clean_text(text):
 	url = "https://raw.githubusercontent.com/stopwords-iso/stopwords-ko/master/stopwords-ko.txt"
@@ -50,9 +47,10 @@ def clean_text(text):
 		temp = ""
 	return " ".join(cleaned_texts)
 
-
-def predict_sentiment(text, model, tokenizer, device):
+def predict_sentiment(text):
 	"""단일 텍스트에 대한 감정 예측"""
+	model_ckpt = './kpfbert_sentiment_model'
+	model, tokenizer, device = load_model_and_tokenizer(model_ckpt)
 	model.eval()
 
 	# 텍스트 전처리
@@ -80,22 +78,26 @@ def predict_sentiment(text, model, tokenizer, device):
 
 	return predicted_class, confidence, predictions[0].cpu().numpy()
 
-# ========================================
-# 3. 추론 예시
-# ========================================
 
-print("\n=== Inference Examples ===")
-test_sentences = [
-    "이 주식은 정말 좋은 투자 기회인 것 같습니다.",
-    "시장 상황이 불안정하여 걱정됩니다.",
-    "오늘 주가는 보합세를 보이고 있습니다."
-]
+if __name__ == "__main__":
+	id2label = {
+		0: "부정",
+		1: "중립",
+		2: "긍정"
+	}
 
-for sentence in test_sentences:
-    pred_class, confidence, probs = predict_sentiment(sentence, model, tokenizer, device)
-    print(f"\nText: {sentence}")
-    print(f"Predicted Class: {pred_class}")
-    print(f"Confidence: {confidence:.4f}")
-    print(f"Probabilities: {probs}")
+	print("\n=== Inference Examples ===")
+	test_sentences = [
+		"이 주식은 정말 좋은 투자 기회인 것 같습니다.",
+		"시장 상황이 불안정하여 걱정됩니다.",
+		"오늘 주가는 보합세를 보이고 있습니다."
+	]
 
-print("\n=== Inference finished ===")
+	for sentence in test_sentences:
+		pred_class, confidence, probs = predict_sentiment(sentence, model, tokenizer, device)
+		print(f"\nText: {sentence}")
+		print(f"Predicted Class: {id2label[pred_class]}")
+		print(f"Confidence: {confidence:.4f}")
+		print(f"Probabilities: {probs}")
+
+	print("\n=== Inference finished ===")
