@@ -9,7 +9,7 @@ def cluster_total_news(news_data):
     pattern = re.compile(r'\[.*?\]')
 
     df_news_data = pd.DataFrame(news_data, encoding="utf-8")
-    for idx, title in enumerate(df['제목']):
+    for idx, title in enumerate(df_news_data['제목']):
         no_bracket = pattern.sub('', title)
         df_news_data.loc[idx, "제목"] = no_bracket.strip()
     news_title = df_news_data.copy()[['제목']]
