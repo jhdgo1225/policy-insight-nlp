@@ -1,4 +1,4 @@
-from transformers import BertModel, BertTokenizer, BertForSequenceClassification
+from transformers import BertForSequenceClassification, BertTokenizer
 from transformers import Trainer, TrainingArguments, DataCollatorWithPadding
 from datasets import load_dataset
 import torch
@@ -20,7 +20,14 @@ output_dir = "./kpfbert_sentiment_model"
 num_labels = 3  # 긍정/중립/부정 (데이터에 맞게 조정)
 
 # 디바이스 설정
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+if torch.cuda.is_available():
+    device = torch.device('cuda')
+elif torch.backends.mps.is_available():
+    # MPS는 학습에만 사용, 추론은 CPU 사용 권장
+    device = torch.device('mps')
+    print("Warning: Using MPS device. Inference will fall back to CPU for stability.")
+else:
+    device = torch.device('cpu')
 print(f"Using device: {device}")
 
 # ========================================
@@ -249,7 +256,15 @@ print(classification_report(
 
 def predict_sentiment(text, model, tokenizer, device):
     """단일 텍스트에 대한 감정 예측"""
+    # 모델을 평가 모드로 설정
     model.eval()
+
+	# MPS 장치 사용 시 CPU로 폴백 (안정성)
+    inference_device = device
+    if device.type == 'mps':
+        print("Warning: MPS device detected. Switching to CPU for inference to avoid MPS errors.")
+        inference_device = torch.device('cpu')
+        model.to(inference_device)
 
     # 텍스트 전처리
     cleaned_text = clean_text(text)
@@ -264,7 +279,7 @@ def predict_sentiment(text, model, tokenizer, device):
     )
 
     # 디바이스로 이동
-    inputs = {k: v.to(device) for k, v in inputs.items()}
+    inputs = {k: v.to(inference_device) for k, v in inputs.items()}
 
     # 예측
     with torch.no_grad():
