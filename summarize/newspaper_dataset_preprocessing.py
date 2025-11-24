@@ -4,11 +4,6 @@ import asyncio
 from datasets import load_dataset
 from sklearn.model_selection import train_test_split
 
-train_dataset = load_dataset('json', data_files="./newspaper_summarize/train_original.json")
-test_dataset = load_dataset('json', data_files="./newspaper_summarize/valid_original.json")
-train_dataset = train_dataset['train']['documents']
-test_dataset = test_dataset['train']['documents']
-
 async def extract_summarize_and_body(article):
 	"""비동기적으로 기사에서 요약문과 본문을 추출합니다."""
 	summarize = article['abstractive'][0]
@@ -49,6 +44,10 @@ def original_to_jsonl(dataset):
 async def main():
 	"""메인 비동기 함수"""
 	print("비동기 병렬 처리로 데이터 변환을 시작합니다...")
+	train_dataset = load_dataset('json', data_files="./newspaper_summarize/train_original.json")
+	test_dataset = load_dataset('json', data_files="./newspaper_summarize/valid_original.json")
+	train_dataset = train_dataset['train']['documents']
+	test_dataset = test_dataset['train']['documents']
 	
 	# 병렬로 훈련 및 테스트 데이터 처리
 	train_task = original_to_jsonl_async(train_dataset, batch_size=50, max_concurrent=5)
