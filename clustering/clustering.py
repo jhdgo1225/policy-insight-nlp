@@ -4,7 +4,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import DBSCAN
 import re
 
-def cluster_total_news(news_data, data_type='csv'):
+def cluster_total_news(news_data, file_type='csv'):
     # 패턴 컴파일
     pattern = re.compile(r'\[.*?\]')
 
