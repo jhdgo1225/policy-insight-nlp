@@ -78,6 +78,22 @@ def predict_sentiment(text):
 
 	return predicted_class, confidence, predictions[0].cpu().numpy()
 
+def compute_metrics(predictions, labels):
+    """평가 메트릭 계산"""
+    # 정확도
+    accuracy = accuracy_score(labels, predictions)
+
+    # Precision, Recall, F1
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        labels, predictions, average='weighted', zero_division=0
+    )
+
+    return {
+        'accuracy': accuracy,
+        'precision': precision,
+        'recall': recall,
+        'f1': f1
+    }
 
 if __name__ == "__main__":
 	id2label = {
@@ -86,18 +102,50 @@ if __name__ == "__main__":
 		2: "긍정"
 	}
 
-	print("\n=== Inference Examples ===")
-	test_sentences = [
-		"이 주식은 정말 좋은 투자 기회인 것 같습니다.",
-		"시장 상황이 불안정하여 걱정됩니다.",
-		"오늘 주가는 보합세를 보이고 있습니다."
-	]
+	label2id = {
+		"negative": 0,
+		"neutral": 1,
+		"positive": 2
+	}
 
-	for sentence in test_sentences:
-		pred_class, confidence, probs = predict_sentiment(sentence, model, tokenizer, device)
+	eng_label_to_kor = {
+		"negative": "부정",
+		"neutral": "중립",
+		"positive": "긍정"
+	}
+
+	print("\n=== Inference Examples ===")
+	news_data = pd.read_csv("./finance_data.csv", encoding="utf-8")
+	
+	# 레이블별 데이터 개수 확인
+	print("\n=== Label Distribution ===")
+	label_counts = news_data['labels'].value_counts()
+	print("\nRaw counts:")
+	print(label_counts)
+	
+	print("\nPercentage:")
+	print(label_counts / len(news_data) * 100, "%")
+	
+	print("\nDetailed distribution:")
+	for label, count in label_counts.items():
+		percentage = (count / len(news_data) * 100)
+		print(f"{eng_label_to_kor[label]}: {count} samples ({percentage:.2f}%)")
+	
+	print("\n" + "="*50)
+	
+	news_data = news_data[:485]
+	preds = []
+	real = []
+
+	for idx, sentence in enumerate(news_data['kor_sentence']):
+		pred_class, confidence, probs = predict_sentiment(sentence)
+		preds.append(pred_class)
+		real.append(label2id[news_data['labels'][idx]])
 		print(f"\nText: {sentence}")
 		print(f"Predicted Class: {id2label[pred_class]}")
+		print(f"Result Class: {eng_label_to_kor[news_data['labels'][idx]]}")
 		print(f"Confidence: {confidence:.4f}")
 		print(f"Probabilities: {probs}")
 
+	pprint.pprint(compute_metrics(preds, real))
 	print("\n=== Inference finished ===")
