@@ -1,10 +1,14 @@
 **/*.csv
-./sentiment/*.csv
 **/.DS_Store
+**/*.log
+**/.env
+llm/laws
 summarize/newspaper_summarize
 summarize/newspaper_summarize_jsonl
 summarize/cleaned_datasets*
 summarize/kobart_summarization_results
 summarize/kobart_final_model*
 sentiment/kpfbert_sentiment_model
-**/*.log
+llm/chroma_db
+llm/faiss_index
+llm/Meta-Llama-3-8B-Instruct
