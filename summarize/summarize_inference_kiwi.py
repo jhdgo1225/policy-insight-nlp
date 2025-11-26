@@ -8,11 +8,10 @@ import requests
 import re
 import torch
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from kiwipiepy import Kiwi
 
 # tokenizers 병렬 처리 충돌 방지
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-
 
 def get_kiwi_and_stopwords():
     # 전역 변수
@@ -20,7 +19,6 @@ def get_kiwi_and_stopwords():
     _korean_stopwords = None
     
     if _kiwi_instance is None:
-        from kiwipiepy import Kiwi
         _kiwi_instance = Kiwi()
         
     if _korean_stopwords is None:
@@ -39,16 +37,19 @@ def get_kiwi_and_stopwords():
 
 
 def filter_text(lines):
-    """기자/이메일 포함 문장 제거"""
+    """기자/이메일 패턴을 빈 문자열로 치환"""
     reporter_pattern = r'[가-힣]{2,4}\s+기자'
     email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    name_email_pattern = r'[가-힣]{2,4}\s+[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
 
-    def should_keep(segment):
-        """기자/이메일이 없으면 True"""
-        return (not re.search(reporter_pattern, segment) and 
-                not re.search(email_pattern, segment))
+    def remove_patterns(segment):
+        """기자/이메일 패턴을 빈 문자열로 치환"""
+        segment = re.sub(name_email_pattern, '', segment)  # 이름+이메일 먼저 제거
+        segment = re.sub(reporter_pattern, '', segment)
+        segment = re.sub(email_pattern, '', segment)
+        return segment.strip()
 
-    return [line for line in lines if should_keep(line)]
+    return [remove_patterns(line) for line in lines]
 
 
 def preprocess_text_for_inference(text_lines):
@@ -141,60 +142,26 @@ def summarize_text(text_input):
     
     # 디코딩
     summary = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    key_summary_sentence = summary.split('\n')[0]
+    key_summary_sentence = summary
     return key_summary_sentence
 
 
 if __name__ == "__main__":
     """메인 실행 함수"""
-    print("\n" + "="*70)
+    print("\n")
     print(" "*20 + "KoBART 텍스트 요약 (추론 전용)")
     print("="*70)
 
-    print("\n예시 텍스트로 요약 수행\n")
+    with open("./newspaper_summarize_jsonl/newspaper_summarize.jsonl") as f:
+        datasets = [json.loads(line) for line in f]
     
-    # 예시 1: 뉴스 기사
-    print("-"*70)
-    print("[예시 1] 뉴스 기사")
-    print("-"*70)
-    news_text = [
-        "김철수 기자 = 인공지능 기술이 급격히 발전하면서 다양한 산업 분야에서 활용되고 있다.",
-        "특히 자연어 처리 분야에서는 BERT, GPT와 같은 대규모 언어 모델이 등장했다.",
-        "이메일: reporter@example.com",
-        "한국에서도 SK텔레콤이 KoBART, KoBERT 등 한국어 특화 모델을 개발했다.",
-        "이러한 모델들은 문서 요약, 감성 분석, 질의응답 등에 활용되고 있다.",
-        "김영희 기자(younghee@news.com)는 이러한 기술이 미디어 산업에도 큰 영향을 미칠 것으로 전망했다.",
-        "앞으로 인공지능 기술은 더욱 정교해질 것으로 예상된다."
-    ]
-    
-    print("\n[원본]")
-    for i, line in enumerate(news_text, 1):
-        print(f"  {i}. {line}")
-    
-    summary = summarize_text(news_text)
-    print(f"\n[요약문]\n  {summary}\n")
-    
-    # 예시 2: 기술 문서
-    print("-"*70)
-    print("[예시 2] 기술 문서")
-    print("-"*70)
-    tech_text = [
-        "박지성 기자 = 서울시가 2025년 스마트시티 프로젝트를 본격 추진한다.",
-        "이번 프로젝트는 총 5000억원의 예산이 투입된다.",
-        "인공지능, IoT, 빅데이터 기술을 활용해 교통, 환경, 안전 분야를 개선할 계획이다.",
-        "연락처: park@seoul.go.kr",
-        "시민들의 삶의 질 향상이 기대된다."
-    ]
-    
-    print("\n[원본]")
-    for i, line in enumerate(tech_text, 1):
-        print(f"  {i}. {line}")
-    
-    summary = summarize_text(tech_text)
-    print(f"\n[요약문]\n  {summary}\n")
+    pred = summarize_text(datasets[0]['body'])
+    result = datasets[0]['summarize']
+    print("[본문]")
+    print(" ".join(datasets[0]['body']))
+    print(f"[실제 요약문]: {result}")
+    print(f"[예상 요약문]: {pred}")
 
     print("="*70)
     print(" "*25 + "프로그램 종료")
-    print("="*70)
-    print("\n💡 Tip: 이 스크립트를 수정하여 파일에서 텍스트를 읽거나")
-    print("        API 서버로 만들어 활용할 수 있습니다!")
+    

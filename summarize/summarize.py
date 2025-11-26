@@ -55,18 +55,19 @@ def tokenize_summarize_dataset(dataset, model_ckpt='gogamza/kobart-base-v2'):
 
 
 def filter_text(lines):
-    """
-    기자/이메일 포함 문장 제거
-    """
+    """기자/이메일 패턴을 빈 문자열로 치환"""
     reporter_pattern = r'[가-힣]{2,4}\s+기자'
     email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    name_email_pattern = r'[가-힣]{2,4}\s+[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
 
-    def should_keep(segment):
-        """기자/이메일이 없으면 True"""
-        return (not re.search(reporter_pattern, segment) and 
-                not re.search(email_pattern, segment))
+    def remove_patterns(segment):
+        """기자/이메일 패턴을 빈 문자열로 치환"""
+        segment = re.sub(name_email_pattern, '', segment)  # 이름+이메일 먼저 제거
+        segment = re.sub(reporter_pattern, '', segment)
+        segment = re.sub(email_pattern, '', segment)
+        return segment.strip()
 
-    return [line for line in lines if should_keep(line)]
+    return [remove_patterns(line) for line in lines]
 
 
 def preprocess_text_for_inference(text_lines):
@@ -189,7 +190,7 @@ def train_model():
     # 데이터 전처리: body를 입력으로, summarize를 레이블로
     def preprocess_function(examples):
         # body는 문장 리스트이므로 join
-        inputs = [' '.join(body) if isinstance(body, list) else body for body in examples['body']]
+        inputs = [' '.join(body) if isinstance(body, list) else body for body in filter_text(examples['body'])]
         targets = examples['summarize']
         
         # 토크나이징
