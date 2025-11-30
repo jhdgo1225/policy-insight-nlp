@@ -44,13 +44,13 @@ def preprocess_text_for_inference(text_lines):
 def summarize_text(text_input, model, tokenizer, device):
     """
     텍스트를 요약하는 함수
-    
+
     Args:
         text_input: 입력 텍스트 (문자열 또는 문자열 리스트)
         model: 로드된 KoBART 모델
         tokenizer: 토크나이저
         device: 디바이스 (cuda/cpu)
-    
+
     Returns:
         요약문 (문자열)
     """
@@ -61,7 +61,7 @@ def summarize_text(text_input, model, tokenizer, device):
         input_text = ' '.join(processed_lines)
     else:
         input_text = text_input
-    
+
     # 토크나이징
     inputs = tokenizer(
         input_text,
@@ -70,9 +70,9 @@ def summarize_text(text_input, model, tokenizer, device):
         padding='max_length',
         return_tensors='pt'
     )
-    
+
     inputs = {k: v.to(device) for k, v in inputs.items()}
-    
+
     # 모델 추론
     with torch.no_grad():
         outputs = model.generate(
@@ -115,7 +115,7 @@ def main():
     except Exception as e:
         print(f"❌ 모델 로드 중 오류 발생: {e}")
         return
-    
+
     start_time = time.time()
     pred = summarize_text(datasets[0]['body'], model, tokenizer, device)
     end_time = time.time()
