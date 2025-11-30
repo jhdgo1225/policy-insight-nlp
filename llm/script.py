@@ -8,10 +8,15 @@ import glob
 from typing import List, Dict, Any
 from pathlib import Path
 from dotenv import load_dotenv
+import time
+import logging
+
+# 로깅 설정
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # LangChain 관련 임포트
 from langchain_huggingface import HuggingFaceEmbeddings, HuggingFacePipeline
-from langchain_chroma import Chroma
+from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_classic.chains import create_retrieval_chain
@@ -20,7 +25,6 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.cache import InMemoryCache
 from langchain_core.globals import set_llm_cache
 from langchain_core.runnables import RunnableConfig
-from chromadb.config import Settings
 
 # Transformers 임포트
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, pipeline
@@ -29,9 +33,14 @@ import torch
 # ========================================
 # 1. 환경 설정
 # ========================================
-LAWS_DIR = "./laws"
-CHROMA_DB_DIR = "./chroma_db"
-LLM_MODEL_ID = "./Meta-Llama-3-8B-Instruct"
+LAWS_DIR = "./llm/laws"
+CHROMA_DB_DIR = "./llm/chroma_db"
+FAISS_DB_DIR = "./llm/faiss_index"
+LLM_MODEL_ID = "./llm/Meta-Llama-3-8B-Instruct"
+# LAWS_DIR = "./laws"
+# CHROMA_DB_DIR = "./chroma_db"
+# FAISS_DB_DIR = "./faiss_index"
+# LLM_MODEL_ID = "./Meta-Llama-3-8B-Instruct"
 EMBEDDING_MODEL_ID = "intfloat/multilingual-e5-base"
 
 # 디바이스 설정
@@ -150,39 +159,21 @@ def load_law_documents() -> List[Document]:
 # ========================================
 # 4. 벡터 DB 생성 또는 로드
 # ========================================
-def create_or_load_vectordb() -> Chroma:
-    """Chroma 벡터 DB 생성 또는 기존 DB 로드"""
-    
-    if os.path.exists(CHROMA_DB_DIR) and os.listdir(CHROMA_DB_DIR):
-        print("Loading existing Chroma DB...")
-        # 기존 코드를 이렇게 변경
-        settings = Settings(
-            anonymized_telemetry=False,
-            allow_reset=True,
-            chroma_server_auth_credentials_provider=None,
-            chroma_server_auth_credentials=None,
-            chroma_client_auth_provider=None,
-            chroma_client_auth_credentials=None,
-            # sqlite3 설정 추가
-            chroma_db_impl="duckdb+parquet"  # sqlite3 대신 duckdb 사용
-        )
+def create_or_load_vectordb() -> FAISS:
+    """Faiss 벡터 DB 생성 또는 기존 DB 로드"""
 
-        # client = chromadb.PersistentClient(
-        #     path="./chroma_db",
-        #     settings=settings
-        # )
+    if os.path.exists(FAISS_DB_DIR) and os.listdir(FAISS_DB_DIR):
+        print("Loading existing Faiss DB...")
 
-        client = chromadb.PersistentClient(
-            path="./chroma_db",
-            settings=settings
+        # FAISS 로드
+        vectordb = FAISS.load_local(
+            FAISS_DB_DIR,
+            embeddings,
+            allow_dangerous_deserialization=True
         )
-        vectordb = Chroma(
-            client=client,
-            embedding_function=embeddings
-        )
-        print(f"Loaded {vectordb._collection.count()} documents from existing DB")
+        print(f"Loaded {len(vectordb.index_to_docstore_id.keys())} documents from existing DB")
     else:
-        print("Creating new Chroma DB...")
+        print("Creating new Faiss DB...")
         
         # 법령 문서 로드
         documents = load_law_documents()
@@ -193,46 +184,47 @@ def create_or_load_vectordb() -> Chroma:
             chunk_overlap=200,
             length_function=len,
         )
-        
+
         print("Splitting documents into chunks...")
         splits = text_splitter.split_documents(documents)
         print(f"Created {len(splits)} text chunks")
-        
+
         # 빈 청크 필터링
         valid_splits = [doc for doc in splits if doc.page_content.strip() and len(doc.page_content.strip()) > 10]
         print(f"Valid chunks after filtering: {len(valid_splits)}")
-        
+
         if len(valid_splits) == 0:
             raise ValueError("No valid text chunks created! Check document content.")
-        
+
         # 벡터 DB 생성 (배치 처리로 안정성 향상)
         print("Creating vector database (this may take a while)...")
-        
+
         # 배치 크기 설정 (메모리 효율성)
         batch_size = 100
         total_batches = (len(valid_splits) + batch_size - 1) // batch_size
-        
+
         # 첫 번째 배치로 DB 초기화
         first_batch = valid_splits[:batch_size]
-        vectordb = Chroma.from_documents(
+        # FAISS 로드
+        vectordb = FAISS.from_documents(
             documents=first_batch,
             embedding=embeddings,
-            persist_directory=CHROMA_DB_DIR
+            persist_directory=FAISS_DB_DIR
         )
         print(f"Initialized DB with first batch ({len(first_batch)} chunks)")
-        
+
         # 나머지 배치 추가
         for i in range(1, total_batches):
             start_idx = i * batch_size
             end_idx = min((i + 1) * batch_size, len(valid_splits))
             batch = valid_splits[start_idx:end_idx]
-            
+
             if batch:
                 vectordb.add_documents(batch)
                 print(f"Added batch {i+1}/{total_batches} ({len(batch)} chunks)")
-        
+
         print(f"Vector DB created with {vectordb._collection.count()} chunks")
-    
+
     return vectordb
 
 # ========================================
@@ -318,11 +310,8 @@ prompt = ChatPromptTemplate.from_messages([
 
 # Retriever 설정 (유사도 점수 포함)
 retriever = vectordb.as_retriever(
-    search_type="similarity_score_threshold",
-    search_kwargs={
-        "k": 5,  # 상위 5개 문서 검색
-        "score_threshold": 0.0  # 모든 점수 포함 (필터링 없음)
-    }
+    search_type="similarity",
+    search_kwargs={"k": 5} # 상위 5개 문서 검색
 )
 
 # Document chain 생성
@@ -341,9 +330,30 @@ def predict_laws(news_article: str) -> Dict[str, Any]:
     print("뉴스 기사 분석 중...")
     print("="*50)
     
+    # 성능 측정 시작
+    start_time = time.time()
+    
+    # 1단계: 벡터 검색 시간 측정
+    logging.info("[1/3] 벡터 검색 시작...")
+    search_start = time.time()
+    retrieved_docs = retriever.invoke(news_article)
+    search_time = time.time() - search_start
+    logging.info(f"[1/3] 벡터 검색 완료 - {search_time:.2f}초, {len(retrieved_docs)}개 문서 검색됨")
+    
+    # 2단계: 프롬프트 생성 시간 측정
+    logging.info("[2/3] 프롬프트 생성 중...")
+    prompt_start = time.time()
+    
     # *** 데드락 해결: qa_chain.invoke()만 한 번 호출 ***
     # vectordb에 중복 접근하지 않도록 수정
+    logging.info("[3/3] LLM 추론 시작 (시간이 오래 걸릴 수 있습니다)...")
+    llm_start = time.time()
     result = qa_chain.invoke({"input": news_article}, config=RunnableConfig(max_concurrency=1))
+    llm_time = time.time() - llm_start
+    logging.info(f"[3/3] LLM 추론 완료 - {llm_time:.2f}초")
+    
+    total_time = time.time() - start_time
+    logging.info(f"총 소요 시간: {total_time:.2f}초 (검색: {search_time:.2f}초, LLM: {llm_time:.2f}초)")
     
     # 관련 문서 추출 (최신 API: context 키 사용)
     source_docs = result.get('context', [])
