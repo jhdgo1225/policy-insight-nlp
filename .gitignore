@@ -1,3 +1,4 @@
+.vscode
 **/*.csv
 **/.DS_Store
 **/*.log
