@@ -44,7 +44,13 @@ LLM_MODEL_ID = "./llm/Meta-Llama-3-8B-Instruct"
 EMBEDDING_MODEL_ID = "intfloat/multilingual-e5-base"
 
 # 디바이스 설정
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+if torch.cuda.is_available():
+    device = 'cuda'
+elif torch.backends.mps.is_available():
+    device = 'mps'
+else:
+    device = 'cpu'
+
 print(f"Using device: {device}")
 
 # ========================================
@@ -53,7 +59,7 @@ print(f"Using device: {device}")
 print("Loading embedding model...")
 embeddings = HuggingFaceEmbeddings(
     model_name=EMBEDDING_MODEL_ID,
-    model_kwargs={'device': 'cpu'},  # MPS 안정성 이슈로 CPU 사용
+    model_kwargs={'device': device},
     encode_kwargs={'normalize_embeddings': True}
 )
 
@@ -236,14 +242,13 @@ print("Loading LLM model...")
 model = AutoModelForCausalLM.from_pretrained(
     LLM_MODEL_ID,
     trust_remote_code=True,
-    torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-    device_map="auto" if torch.cuda.is_available() else None,
-    low_cpu_mem_usage=True
+    torch_dtype=torch.float16 if device == 'cuda' else torch.float32,
+    device_map="auto" if device == 'cuda' else None
 )
 
-# CPU로 강제 이동 (MPS 안정성)
-if not torch.cuda.is_available():
-    model = model.to('cpu')
+# 디바이스로 이동 (CUDA가 아닌 경우)
+if device != 'cuda':
+    model = model.to(device)
 
 # HuggingFacePipeline 초기화 (model_type 오류 해결)
 # pipeline의 model.config가 제대로 설정되었는지 확인
