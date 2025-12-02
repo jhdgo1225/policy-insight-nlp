@@ -100,17 +100,40 @@ def func(x):
     result['body'].insert(0, "요약: ")
     return result
 
-def load_cleaned_datasets():
-    """전처리된 데이터셋 로드"""
-    with open('./cleaned_datasets/cleaned_train_dataset.json') as f:
-        train_dataset = [data for data in json.load(f)]
-        train_dataset = list(map(func, train_dataset))
-    with open('./cleaned_datasets/cleaned_valid_dataset.json') as f:
-        valid_dataset = [data for data in json.load(f)]
-        valid_dataset = list(map(func, valid_dataset))
-    with open('./cleaned_datasets/cleaned_test_dataset.json') as f:
-        test_dataset = [data for data in json.load(f)]
-        test_dataset = list(map(func, test_dataset))
+def load_datasets():
+    """newspaper_summarize.jsonl 파일을 로드하고 80:10:10 비율로 분리"""
+    # JSONL 파일 읽기
+    dataset = []
+    with open('./newspaper_summarize_jsonl/newspaper_summarize.jsonl', 'r', encoding='utf-8') as f:
+        for line in f:
+            data = json.loads(line.strip())
+            dataset.append(data)
+    
+    print(f"  - 전체 데이터: {len(dataset)}개")
+    
+    # 첫 번째 split: 80% train, 20% temp (valid + test)
+    train_dataset, temp_dataset = train_test_split(
+        dataset,
+        test_size=0.2,
+        random_state=42
+    )
+    
+    # 두 번째 split: temp를 50:50으로 나누어 valid와 test 생성 (각각 10%)
+    valid_dataset, test_dataset = train_test_split(
+        temp_dataset,
+        test_size=0.5,
+        random_state=42
+    )
+    
+    print(f"  - Train: {len(train_dataset)}개 ({len(train_dataset)/len(dataset)*100:.1f}%)")
+    print(f"  - Valid: {len(valid_dataset)}개 ({len(valid_dataset)/len(dataset)*100:.1f}%)")
+    print(f"  - Test: {len(test_dataset)}개 ({len(test_dataset)/len(dataset)*100:.1f}%)")
+    
+    # "요약: " 프리픽스 추가
+    train_dataset = list(map(func, train_dataset))
+    valid_dataset = list(map(func, valid_dataset))
+    test_dataset = list(map(func, test_dataset))
+    
     return train_dataset, valid_dataset, test_dataset
 
 
@@ -127,7 +150,7 @@ def train_model():
     - summarize: 요약문 (예시 -> summarize: "요약문")
     """
     print("\n[1단계] 데이터셋 로드 중...")
-    train_dataset, valid_dataset, test_dataset = load_cleaned_datasets()
+    train_dataset, valid_dataset, test_dataset = load_datasets()
     print(f"  - 훈련 데이터: {len(train_dataset)}개")
     print(f"  - 검증 데이터: {len(valid_dataset)}개")
     print(f"  - 테스트 데이터: {len(test_dataset)}개")
@@ -156,17 +179,15 @@ def train_model():
     print("\n  [하이퍼파라미터 설정]")
     print("  - Learning rate: 3e-5 (한국어 문서 요약 연구에서 가장 일반적)")
     print("  - Batch size: 8 (GPU 메모리 고려)")
-    print("  - Max epochs: 50 (Early Stopping으로 자동 조기 종료)")
-    print("  - Early Stopping patience: 3 (검증 손실 개선 없으면 3 에폭 후 종료)")
+    print("  - Max epochs: 3")
     print("  - Max input length: 1024")
     print("  - Max summary length: 256")
     print("  - Gradient accumulation: 2")
     print("  - Warmup steps: 500")
-    print("  ✨ Early Stopping 활성화: 과적합 방지 및 최적 모델 자동 선택")
     
     training_args = Seq2SeqTrainingArguments(
         output_dir='./kobart_summarization_results',
-        num_train_epochs=50,                   # Early Stopping이 실제 종료 시점 결정
+        num_train_epochs=3,                    # 3 에폭으로 제한
         per_device_train_batch_size=8,         # GPU 메모리에 따라 조정 (8-16)
         per_device_eval_batch_size=8,
         learning_rate=3e-5,                    # KoBART 문서 요약에서 가장 일반적인 값
@@ -177,7 +198,7 @@ def train_model():
         save_strategy="epoch",                 # 에폭마다 저장 (eval_strategy와 일치)
         save_total_limit=3,                    # 최대 체크포인트 개수 (최근 3개만 유지)
         eval_strategy="epoch",                 # 에폭마다 평가
-        load_best_model_at_end=True,           # 최적 모델 자동 로드
+        load_best_model_at_end=False,          # 최적 모델 자동 로드 비활성화
         metric_for_best_model="eval_loss",     # 검증 손실 기준
         greater_is_better=False,               # 손실은 낮을수록 좋음
         predict_with_generate=True,            # 생성 기반 평가
@@ -280,18 +301,8 @@ def train_model():
             'rougeL': result['rougeL']
         }
     
-    # Early Stopping Callback 설정
-    early_stopping_callback = EarlyStoppingCallback(
-        early_stopping_patience=3,        # 3 에폭 동안 개선 없으면 종료
-        early_stopping_threshold=0.0001   # 최소 개선 임계값
-    )
-    
     # Trainer 초기화
     print("\n  [Trainer 초기화...]")
-    print("  - Early Stopping: 활성화")
-    print("  - Patience: 3 에폭")
-    print("  - Threshold: 0.0001")
-    print("  ✨ 검증 손실이 3 에폭 연속 개선되지 않으면 자동 종료")
     
     trainer = Seq2SeqTrainer(
         model=model,
@@ -300,8 +311,7 @@ def train_model():
         eval_dataset=valid_dataset_processed,
         tokenizer=tokenizer,
         data_collator=data_collator,
-        compute_metrics=compute_metrics,
-        callbacks=[early_stopping_callback]   # Early Stopping 추가
+        compute_metrics=compute_metrics
     )
     
     """
@@ -315,17 +325,13 @@ def train_model():
     
     print("\n[훈련 완료]")
     print(f"  - 최종 Loss: {train_result.training_loss:.4f}")
-    print(f"  - 실제 훈련된 에폭: {int(train_result.metrics['epoch'])} / 50")
-    if int(train_result.metrics['epoch']) < 50:
-        print(f"  ✅ Early Stopping 작동: 과적합 방지 성공!")
-    else:
-        print(f"  - 최대 에폭까지 훈련 완료")
+    print(f"  - 훈련된 에폭: {int(train_result.metrics['epoch'])} / 3")
     
     # 모델 저장
     print("\n[모델 저장 중...]")
-    trainer.save_model('./kobart_final_model')
-    tokenizer.save_pretrained('./kobart_final_model')
-    print("  - 모델 저장 완료: ./kobart_final_model")
+    trainer.save_model('./kobart_final_model_v3')
+    tokenizer.save_pretrained('./kobart_final_model_v3')
+    print("  - 모델 저장 완료: ./kobart_final_model_v3")
     
     # 검증 데이터셋 평가
     print("\n[검증 데이터셋 평가 중...]")
@@ -355,147 +361,6 @@ def train_model():
     return trainer, tokenizer, model
 
 
-def inference_example(trainer=None, tokenizer=None, model=None):
-    """
-    5. KoBART 모델 추론
-    전처리되지 않은 본문으로 추론 예시
-    """
-    print("\n" + "="*50)
-    print("KoBART 문서 요약 모델 추론")
-    print("="*50)
-    
-    # 모델이 제공되지 않은 경우 로드
-    if model is None or tokenizer is None:
-        print("\n[저장된 모델 로드 중...]")
-        model_path = './kobart_final_model'
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        model = AutoModelForSeq2SeqLM.from_pretrained(model_path)
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        model.to(device)
-        print(f"  - 모델 로드 완료 (디바이스: {device})")
-    
-    # 전처리되지 않은 예시 본문 (기자명, 이메일 포함)
-    raw_text_lines = [
-        "김철수 기자 = 인공지능 기술이 급격히 발전하면서 다양한 산업 분야에서 활용되고 있다.",
-        "특히 자연어 처리 분야에서는 BERT, GPT와 같은 대규모 언어 모델이 등장했다.",
-        "이메일: reporter@example.com",
-        "한국에서도 SK텔레콤이 KoBART, KoBERT 등 한국어 특화 모델을 개발했다.",
-        "이러한 모델들은 문서 요약, 감성 분석, 질의응답 등에 활용되고 있다.",
-        "김영희 기자(younghee@news.com)는 이러한 기술이 미디어 산업에도 큰 영향을 미칠 것으로 전망했다.",
-        "앞으로 인공지능 기술은 더욱 정교해질 것으로 예상된다."
-    ]
-    
-    print("\n[원본 텍스트]")
-    for i, line in enumerate(raw_text_lines, 1):
-        print(f"  {i}. {line}")
-    
-    # 전처리 파이프라인 적용
-    print("\n[전처리 시작]")
-    print("  1. 기자명 및 이메일 제거...")
-    filtered_lines = filter_text(raw_text_lines)
-    print(f"     -> {len(raw_text_lines) - len(filtered_lines)}개 문장 제거됨")
-    
-    print("  2. 형태소 분석 및 불용어 제거...")
-    processed_lines = preprocess_text_for_inference(raw_text_lines)
-    
-    print("\n[전처리된 텍스트]")
-    for i, line in enumerate(processed_lines, 1):
-        print(f"  {i}. {line}")
-
-    # 전처리된 텍스트를 하나의 문자열로 결합
-    input_text = ' '.join(processed_lines)
-    
-    print("\n[토크나이징]")
-    # 토크나이징
-    inputs = tokenizer(
-        input_text,
-        max_length=1024,
-        truncation=True,
-        padding='max_length',
-        return_tensors='pt'
-    )
-    
-    device = model.device
-    inputs = {k: v.to(device) for k, v in inputs.items()}
-    print(f"  - 입력 토큰 길이: {inputs['input_ids'].shape[1]}")
-    
-    print("\n[모델 추론 중...]")
-    # 모델 추론
-    with torch.no_grad():
-        outputs = model.generate(
-            inputs['input_ids'],
-            max_length=256,              # 요약문 최대 길이
-            num_beams=5,                 # Beam search
-            early_stopping=True,
-            no_repeat_ngram_size=2,      # 반복 방지
-            length_penalty=1.0,
-            temperature=1.0
-        )
-    
-    # 디코딩
-    summary = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    
-    print("\n" + "="*50)
-    print("[생성된 요약문]")
-    print("="*50)
-    print(summary)
-    print("="*50)
-    
-    # 추가 예시들
-    print("\n\n[추가 예시 1: 뉴스 기사]")
-    news_text = [
-        "박지성 기자 = 서울시가 2025년 스마트시티 프로젝트를 본격 추진한다.",
-        "이번 프로젝트는 총 5000억원의 예산이 투입된다.",
-        "인공지능, IoT, 빅데이터 기술을 활용해 교통, 환경, 안전 분야를 개선할 계획이다.",
-        "연락처: park@seoul.go.kr",
-        "시민들의 삶의 질 향상이 기대된다."
-    ]
-    
-    processed = preprocess_text_for_inference(news_text)
-    
-    input_text = ' '.join(processed)
-    inputs = tokenizer(input_text, max_length=1024, truncation=True, return_tensors='pt')
-    inputs = {k: v.to(device) for k, v in inputs.items()}
-    
-    with torch.no_grad():
-        outputs = model.generate(
-            inputs['input_ids'],
-            max_length=256,
-            num_beams=5,
-            early_stopping=True
-        )
-    
-    summary = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    print(f"원문: {' '.join(news_text)}")
-    print(f"\n요약: {summary}")
-    
-    print("\n\n[추가 예시 2: 기술 문서]")
-    tech_text = [
-        "이재용 기자 = 딥러닝은 인공신경망을 기반으로 한 기계학습 방법이다.",
-        "다층 신경망 구조를 통해 복잡한 패턴을 학습할 수 있다.",
-        "이미지 인식, 음성 인식, 자연어 처리 등에 활용된다.",
-        "문의: tech@ai.com",
-        "최근에는 Transformer 구조가 주목받고 있다."
-    ]
-    
-    processed = preprocess_text_for_inference(tech_text)
-    input_text = ' '.join(processed)
-    inputs = tokenizer(input_text, max_length=1024, truncation=True, return_tensors='pt')
-    inputs = {k: v.to(device) for k, v in inputs.items()}
-    
-    with torch.no_grad():
-        outputs = model.generate(
-            inputs['input_ids'],
-            max_length=256,
-            num_beams=5,
-            early_stopping=True
-        )
-    
-    summary = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    print(f"원문: {' '.join(tech_text)}")
-    print(f"\n요약: {summary}")
-
-
 def main():
     """메인 실행 함수 - 모델 훈련 후 바로 추론 수행"""
     
@@ -509,9 +374,6 @@ def main():
     
     # 모델 훈련
     trainer, tokenizer, model = train_model()
-    
-    # 훈련 완료 후 추론
-    inference_example(trainer, tokenizer, model)
     
     print("\n" + "="*70)
     print(" "*25 + "프로그램 종료")
