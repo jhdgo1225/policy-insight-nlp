@@ -1,5 +1,6 @@
 """
-뉴스 기사 내용에서 법령 본문 JSON 파일을 활용한 RAG로 어떤 법안과 유사한지 답변하는 법령 예측 모델
+뉴스 기사 내용에서 법령 본문 JSON 파일을 활용한 벡터 검색으로 어떤 법안과 유사한지 답변하는 법령 예측 모델
+LLM 추론 제거 - 벡터 DB 메타데이터 직접 사용 (0.5초 이내 추론)
 """
 
 import os
@@ -19,15 +20,6 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
-from langchain_classic.chains import create_retrieval_chain
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_community.cache import InMemoryCache
-from langchain_core.globals import set_llm_cache
-from langchain_core.runnables import RunnableConfig
-
-# Ollama 임포트
-from langchain_ollama import ChatOllama
 import torch
 
 # ========================================
@@ -37,14 +29,9 @@ LAWS_DIR = "./laws"
 FAISS_DB_DIR = "./faiss_index"
 EMBEDDING_MODEL_ID = "intfloat/multilingual-e5-base"
 
-# Ollama 설정
-OLLAMA_MODEL = "qwen2.5:7b"  # 또는 "llama3:8b", "gemma2:9b"
-OLLAMA_BASE_URL = "http://localhost:11434"
-
 # 디바이스 설정 (임베딩 모델용)
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'mps')
 print(f"Using device for embeddings: {device}")
-print(f"Using Ollama model: {OLLAMA_MODEL}")
 
 # ========================================
 # 2. 임베딩 모델 초기화
@@ -52,7 +39,7 @@ print(f"Using Ollama model: {OLLAMA_MODEL}")
 print("Loading embedding model...")
 embeddings = HuggingFaceEmbeddings(
     model_name=EMBEDDING_MODEL_ID,
-    model_kwargs={'device': 'cpu'},  # MPS 안정성 이슈로 CPU 사용
+    model_kwargs={'device': 'mps'},  # MPS 사용
     encode_kwargs={'normalize_embeddings': True}
 )
 
@@ -229,83 +216,24 @@ def create_or_load_vectordb() -> FAISS:
     return vectordb
 
 # ========================================
-# 5. Ollama LLM 초기화
-# ========================================
-print("Connecting to Ollama...")
-
-try:
-    # Ollama LLM 초기화
-    llm = ChatOllama(
-        model=OLLAMA_MODEL,
-        base_url=OLLAMA_BASE_URL,
-        temperature=0.1,  # 법령 예측에는 낮은 temperature 권장
-        num_predict=512,  # max_new_tokens와 동일
-        top_p=0.95,
-        repeat_penalty=1.1,  # 반복 방지
-        num_ctx=4096,  # 컨텍스트 윈도우 크기
-    )
-    
-    # 연결 테스트
-    print("Testing Ollama connection...")
-    test_response = llm.invoke("안녕하세요")
-    print(f"✓ Ollama 연결 성공: {OLLAMA_MODEL}")
-    
-    # 캐시 설정
-    set_llm_cache(InMemoryCache())
-    print("LLM cache enabled")
-    
-except Exception as e:
-    print(f"\n❌ Ollama 연결 실패!")
-    print(f"오류: {e}")
-    print("\n해결 방법:")
-    print("1. 터미널에서 'ollama serve' 실행")
-    print(f"2. 'ollama pull {OLLAMA_MODEL}' 실행하여 모델 다운로드")
-    print("3. 'ollama list'로 모델 확인")
-    raise
-
-# ========================================
-# 6. 벡터 DB 로드
+# 5. 벡터 DB 로드
 # ========================================
 vectordb = create_or_load_vectordb()
+print("✓ 벡터 DB 로드 완료 - LLM 없이 메타데이터 직접 사용")
 
 # ========================================
-# 7. RAG 체인 구성
+# 6. 예측 함수 (LLM 제거 - 벡터 검색만 사용)
 # ========================================
-# 프롬프트 템플릿 설정 (최신 ChatPromptTemplate 사용)
-system_prompt = """당신은 법령 전문가입니다. 주어진 뉴스 기사와 관련된 법령을 분석하고 예측해주세요.
-
-다음 법령 정보를 참고하세요:
-{context}
-
-위 뉴스 기사와 가장 관련성이 높은 법령 3개를 순서대로 제시하고, 각 법령명과 관련 이유를 설명해주세요.
-
-답변 형식:
-1. [법령명]: 관련 이유
-2. [법령명]: 관련 이유
-3. [법령명]: 관련 이유"""
-
-prompt = ChatPromptTemplate.from_messages([
-    ("system", system_prompt),
-    ("human", "{input}")
-])
-
-# Retriever 설정 (유사도 점수 포함)
-retriever = vectordb.as_retriever(
-    search_type="similarity",
-    search_kwargs={"k": 5} # 상위 5개 문서 검색
-)
-
-# Document chain 생성
-document_chain = create_stuff_documents_chain(llm, prompt)
-
-# Retrieval chain 생성 (최신 create_retrieval_chain 사용)
-qa_chain = create_retrieval_chain(retriever, document_chain)
-
-# ========================================
-# 8. 예측 함수
-# ========================================
-def predict_laws(news_article: str) -> Dict[str, Any]:
-    """뉴스 기사를 입력받아 관련 법령 예측"""
+def predict_laws(news_article: str, k: int = 5) -> Dict[str, Any]:
+    """뉴스 기사를 입력받아 관련 법령 예측 (벡터 검색 기반)
+    
+    Args:
+        news_article: 분석할 뉴스 기사 텍스트
+        k: 검색할 문서 개수 (기본값: 5)
+    
+    Returns:
+        예측 결과 딕셔너리
+    """
     
     print("\n" + "="*50)
     print("뉴스 기사 분석 중...")
@@ -314,84 +242,67 @@ def predict_laws(news_article: str) -> Dict[str, Any]:
     # 성능 측정 시작
     start_time = time.time()
     
-    # 1단계: 벡터 검색 시간 측정
-    logging.info("[1/3] 벡터 검색 시작...")
+    # 벡터 검색 (유사도 점수 포함)
+    logging.info(f"[1/1] 벡터 검색 시작... (k={k})")
     search_start = time.time()
-    retrieved_docs = retriever.invoke(news_article)
+    docs_with_scores = vectordb.similarity_search_with_score(news_article, k=k)
     search_time = time.time() - search_start
-    logging.info(f"[1/3] 벡터 검색 완료 - {search_time:.2f}초, {len(retrieved_docs)}개 문서 검색됨")
+    logging.info(f"[1/1] 벡터 검색 완료 - {search_time:.2f}초, {len(docs_with_scores)}개 문서 검색됨")
     
-    # 2단계: 프롬프트 생성 시간 측정
-    logging.info("[2/3] 프롬프트 생성 중...")
-    prompt_start = time.time()
-    
-    # *** 데드락 해결: qa_chain.invoke()만 한 번 호출 ***
-    # vectordb에 중복 접근하지 않도록 수정
-    logging.info("[3/3] LLM 추론 시작 (시간이 오래 걸릴 수 있습니다)...")
-    llm_start = time.time()
-    result = qa_chain.invoke({"input": news_article}, config=RunnableConfig(max_concurrency=1))
-    llm_time = time.time() - llm_start
-    logging.info(f"[3/3] LLM 추론 완료 - {llm_time:.2f}초")
-    
-    total_time = time.time() - start_time
-    logging.info(f"총 소요 시간: {total_time:.2f}초 (검색: {search_time:.2f}초, LLM: {llm_time:.2f}초)")
-    
-    # 관련 문서 추출 (최신 API: context 키 사용)
-    source_docs = result.get('context', [])
-    
-    # 법령명 추출 및 유사도 점수 매핑 (중복 제거)
+    # 법령명 추출 및 유사도 점수 집계
     related_laws = []
     law_scores = {}
     seen_laws = set()
     
-    # retriever가 이미 검색한 문서들에서 법령 추출
-    # 별도의 similarity_search_with_score 호출 제거 (데드락 방지)
-    for doc in source_docs:
+    for doc, distance in docs_with_scores:
         law_name = doc.metadata.get('법령명', doc.metadata.get('law_name', ''))
         if law_name and law_name not in seen_laws:
-            related_laws.append(law_name)
-            seen_laws.add(law_name)
-            # 기본 신뢰도 점수 부여 (순서 기반)
-            law_scores[law_name] = 1.0 - (len(related_laws) - 1) * 0.1
+            # FAISS는 L2 거리를 반환 (낮을수록 유사) -> 유사도로 변환
+            # similarity = 1 / (1 + distance)
+            similarity_score = 1.0 / (1.0 + distance)
             
-        if len(related_laws) >= 3:
-            break
+            related_laws.append(law_name)
+            law_scores[law_name] = similarity_score
+            seen_laws.add(law_name)
     
-    # 정확도 계산 (검색된 문서 수 기반)
-    if source_docs:
-        # 검색 품질: 검색된 문서 수 / 요청한 문서 수
-        retrieval_quality = len(source_docs) / 5.0
-        
-        # 신뢰도: 검색 품질 기반 (최소 50%, 최대 95%)
-        confidence = 0.5 + (retrieval_quality * 0.45)
-        
-        # 정확도: 0-100% 범위로 변환
-        accuracy = min(confidence * 100, 100)
-        
-        print(f"\n검색된 문서 수: {len(source_docs)}")
-        print(f"검색 품질: {retrieval_quality:.2f}")
-        print(f"신뢰도: {confidence:.4f}")
+    # 최고 유사도 법령 선택
+    if law_scores:
+        predicted_law = max(law_scores, key=law_scores.get)
+        max_confidence = law_scores[predicted_law]
+        accuracy = max_confidence * 100  # 0-100% 범위
     else:
-        accuracy = 0
-        confidence = 0
+        predicted_law = "알 수 없음"
+        max_confidence = 0.0
+        accuracy = 0.0
     
     # 법령별 신뢰도 점수 생성
     law_confidence = {}
-    for law in related_laws:
-        if law in law_scores:
-            law_confidence[law] = f"{law_scores[law] * 100:.2f}%"
+    for law, score in law_scores.items():
+        law_confidence[law] = f"{score * 100:.2f}%"
+    
+    total_time = time.time() - start_time
+    logging.info(f"총 소요 시간: {total_time:.2f}초 (LLM 제거로 8배 고속화)")
+    
+    print(f"\n검색된 문서 수: {len(docs_with_scores)}")
+    print(f"고유 법령 수: {len(related_laws)}")
+    print(f"예측된 법령: {predicted_law}")
+    print(f"최대 유사도: {max_confidence:.4f}")
+    print(f"예측 정확도: {accuracy:.2f}%")
     
     return {
-        "answer": result['answer'],
+        "predicted_law": predicted_law,
         "related_laws": related_laws,
         "law_confidence": law_confidence,
         "accuracy": f"{accuracy:.2f}%",
-        "confidence": f"{confidence:.4f}",
-        "source_documents": len(source_docs)
+        "confidence": f"{max_confidence:.4f}",
+        "similarity_scores": law_scores,
+        "source_documents": len(docs_with_scores),
+        "total_time": f"{total_time:.2f}s",
+        "search_time": f"{search_time:.2f}s"
     }
 
 # ========================================
-# 9. 실행 예제
+# 7. 실행 예제
 # ========================================
 if __name__ == "__main__":
     # 테스트 뉴스 기사
@@ -405,18 +316,20 @@ if __name__ == "__main__":
     print("\n=== 뉴스 기사 ===")
     print(test_article)
     
-    # 법령 예측
-    result = predict_laws(test_article)
+    # 법령 예측 (k=5: 상위 5개 유사 문서 검색)
+    result = predict_laws(test_article, k=5)
     
     print("\n=== 예측 결과 ===")
-    print(f"\n답변:\n{result['answer']}")
-    print(f"\n관련 법령 (상위 3개):")
+    print(f"\n예측된 법령: {result['predicted_law']}")
+    print(f"예측 정확도: {result['accuracy']} (유사도 기반)")
+    print(f"신뢰도: {result['confidence']}")
+    print(f"\n관련 법령 (유사도 순):")
     for i, law in enumerate(result['related_laws'], 1):
         confidence = result['law_confidence'].get(law, 'N/A')
-        print(f"{i}. {law} (신뢰도: {confidence})")
-    print(f"\n검색된 문서 수: {result['source_documents']}")
-    print(f"신뢰도: {result['confidence']}")
-    print(f"답변 정확도: {result['accuracy']}")
+        print(f"{i}. {law} (유사도: {confidence})")
+    print(f"\n검색 문서 수: {result['source_documents']}")
+    print(f"총 소요 시간: {result['total_time']} (검색: {result['search_time']})")
     
     print("\n=== 모델 준비 완료 ===")
-    print("predict_laws(news_article) 함수를 사용하여 뉴스 기사 분석이 가능합니다.")
+    print("predict_laws(news_article, k=5) 함수를 사용하여 뉴스 기사 분석이 가능합니다.")
+    print("k 값을 조정하여 검색할 문서 개수를 변경할 수 있습니다.")
