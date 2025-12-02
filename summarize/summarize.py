@@ -180,16 +180,16 @@ def train_model():
     print("  - Learning rate: 3e-5 (한국어 문서 요약 연구에서 가장 일반적)")
     print("  - Batch size: 8 (GPU 메모리 고려)")
     print("  - Max epochs: 3")
-    print("  - Max input length: 1024")
-    print("  - Max summary length: 256")
+    print("  - Max input length: 512")
+    print("  - Max summary length: 128")
     print("  - Gradient accumulation: 2")
     print("  - Warmup steps: 500")
     
     training_args = Seq2SeqTrainingArguments(
         output_dir='./kobart_summarization_results',
         num_train_epochs=3,                    # 3 에폭으로 제한
-        per_device_train_batch_size=8,         # GPU 메모리에 따라 조정 (8-16)
-        per_device_eval_batch_size=8,
+        per_device_train_batch_size=2,         # GPU 메모리에 따라 조정 (8-16)
+        per_device_eval_batch_size=2,
         learning_rate=3e-5,                    # KoBART 문서 요약에서 가장 일반적인 값
         weight_decay=0.01,                     # 가중치 감쇠
         warmup_steps=500,                      # 학습률 워밍업
@@ -202,7 +202,7 @@ def train_model():
         metric_for_best_model="eval_loss",     # 검증 손실 기준
         greater_is_better=False,               # 손실은 낮을수록 좋음
         predict_with_generate=True,            # 생성 기반 평가
-        generation_max_length=256,             # 요약문 최대 길이
+        generation_max_length=128,             # 요약문 최대 길이
         gradient_accumulation_steps=2,         # 배치 크기를 효과적으로 늘림
         fp16=torch.cuda.is_available(),        # Mixed precision (GPU에서만)
         report_to="none",                      # wandb 등 로깅 비활성화
@@ -217,7 +217,7 @@ def train_model():
         # 토크나이징
         model_inputs = tokenizer(
             inputs, 
-            max_length=1024,          # 입력 최대 길이
+            max_length=512,          # 입력 최대 길이
             truncation=True,
             padding='max_length',
             return_tensors='pt'
@@ -226,7 +226,7 @@ def train_model():
         # 레이블 토크나이징
         labels = tokenizer(
             targets,
-            max_length=256,           # 요약문 최대 길이
+            max_length=128,           # 요약문 최대 길이
             truncation=True,
             padding='max_length',
             return_tensors='pt'
